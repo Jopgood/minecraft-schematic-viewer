@@ -85,14 +85,15 @@ class SchematicViewer {
         return this.renderFallbackSchematic(this.schematic.dimensions);
       }
       
-      // Load texture atlas
+      // Load texture atlas and preload common textures
       await this.textureLoader.loadAtlas();
+      this.preloadCommonTextures(); // Start loading in background
       
       // Clear previous schematic
       this.clear();
       
       // Render the schematic
-      this.renderSchematic();
+      await this.renderSchematic();
       
       // Set up layer controls
       this.setupLayerControls();
@@ -182,7 +183,7 @@ class SchematicViewer {
     }
   }
   
-  renderSchematic() {
+  async renderSchematic() {
     const { blocks, dimensions } = this.schematic;
     
     // Group blocks by type for instanced rendering
@@ -193,76 +194,118 @@ class SchematicViewer {
       // Skip air blocks
       if (blockId === 'minecraft:air') continue;
       
-      // Create geometry
-      const geometry = new THREE.BoxGeometry(1, 1, 1);
-      
-      // Get or create material
-      let materials;
-      if (this.texturesEnabled) {
-        // Try to get the texture for this block type
-        materials = this.textureLoader.getBlockColor(blockId);
-      } else {
-        // Fallback to colored material
-        materials = [
-          new THREE.MeshLambertMaterial({ 
-            color: this.textureLoader.getBlockColor(blockId) 
-          })
-        ];
-      }
-      
-      // Create mesh for this block type
-      const mesh = new THREE.InstancedMesh(
-        geometry,
-        Array.isArray(materials) ? materials[0] : materials,
-        blockInstances.length
-      );
-      
-      // Set transforms for each instance
-      const matrix = new THREE.Matrix4();
-      blockInstances.forEach((block, index) => {
-        matrix.setPosition(
-          block.x - dimensions.width / 2,
-          block.y,
-          block.z - dimensions.length / 2
-        );
-        mesh.setMatrixAt(index, matrix);
-      });
-      
-      // Add to scene
-      this.scene.add(mesh);
-      this.meshes.push(mesh);
-      
-      // Track y-position for layer view
-      const blocksByLayer = _.groupBy(blockInstances, 'y');
-      for (const [y, layerBlocks] of Object.entries(blocksByLayer)) {
-        if (!this.layerMeshes[y]) {
-          this.layerMeshes[y] = [];
+      try {
+        // Create geometry
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        
+        // Get or create material
+        let material;
+        if (this.texturesEnabled) {
+          // Set whether to use fallback colors based on texturesEnabled
+          this.textureLoader.setUseFallbackColors(!this.texturesEnabled);
+          // Try to get the texture for this block type
+          material = await this.textureLoader.getBlockMaterial(blockId);
+        } else {
+          // Fallback to colored material
+          material = this.textureLoader.createMaterialsFromColor(blockId);
         }
         
-        // Create a mesh for this layer
-        const layerMesh = new THREE.InstancedMesh(
-          geometry,
-          Array.isArray(materials) ? materials[0] : materials,
-          layerBlocks.length
-        );
+        // Handle array of materials (for different faces)
+        let instancedMesh;
+        if (Array.isArray(material)) {
+          // For multiple materials, we need separate meshes for each face
+          // Create a merged geometry for all faces
+          const mergedGeometry = new THREE.BoxGeometry(1, 1, 1);
+          const mergedMaterial = material[0]; // Use first material for instanced rendering
+          
+          instancedMesh = new THREE.InstancedMesh(
+            mergedGeometry,
+            mergedMaterial,
+            blockInstances.length
+          );
+        } else {
+          // Single material for all faces
+          instancedMesh = new THREE.InstancedMesh(
+            geometry,
+            material,
+            blockInstances.length
+          );
+        }
         
-        // Set transforms
-        layerBlocks.forEach((block, index) => {
+        // Set transforms for each instance
+        const matrix = new THREE.Matrix4();
+        blockInstances.forEach((block, index) => {
           matrix.setPosition(
             block.x - dimensions.width / 2,
             block.y,
             block.z - dimensions.length / 2
           );
-          layerMesh.setMatrixAt(index, matrix);
+          instancedMesh.setMatrixAt(index, matrix);
         });
         
-        // Don't add to scene yet - will be added when layer is selected
-        this.layerMeshes[y].push(layerMesh);
+        // Add to scene
+        this.scene.add(instancedMesh);
+        this.meshes.push(instancedMesh);
+        
+        // Track y-position for layer view
+        const blocksByLayer = _.groupBy(blockInstances, 'y');
+        for (const [y, layerBlocks] of Object.entries(blocksByLayer)) {
+          if (!this.layerMeshes[y]) {
+            this.layerMeshes[y] = [];
+          }
+          
+          // Create a mesh for this layer using the same material
+          const layerMesh = new THREE.InstancedMesh(
+            geometry,
+            Array.isArray(material) ? material[0] : material,
+            layerBlocks.length
+          );
+          
+          // Set transforms
+          layerBlocks.forEach((block, index) => {
+            matrix.setPosition(
+              block.x - dimensions.width / 2,
+              block.y,
+              block.z - dimensions.length / 2
+            );
+            layerMesh.setMatrixAt(index, matrix);
+          });
+          
+          // Don't add to scene yet - will be added when layer is selected
+          this.layerMeshes[y].push(layerMesh);
+        }
+      } catch (error) {
+        console.error(`Failed to render block type ${blockId}:`, error);
       }
     }
     
     // Add grid for reference
     this.addGrid(dimensions);
+  }
+  
+  // Preload common textures for better performance
+  async preloadCommonTextures() {
+    const commonBlocks = [
+      'minecraft:stone',
+      'minecraft:dirt',
+      'minecraft:grass_block',
+      'minecraft:oak_log',
+      'minecraft:oak_planks',
+      'minecraft:glass',
+      'minecraft:cobblestone',
+      'minecraft:sand',
+      'minecraft:gravel',
+      'minecraft:water'
+    ];
+    
+    // Preload common textures in the background
+    for (const blockId of commonBlocks) {
+      try {
+        await this.textureLoader.getBlockMaterial(blockId);
+      } catch (error) {
+        console.warn(`Failed to preload texture for ${blockId}:`, error);
+      }
+    }
   }
   
   addGrid(dimensions) {
@@ -367,6 +410,9 @@ class SchematicViewer {
   
   toggleTextures() {
     this.texturesEnabled = !this.texturesEnabled;
+    
+    // Update texture loader setting
+    this.textureLoader.setUseFallbackColors(!this.texturesEnabled);
     
     // Reload schematic to apply texture changes
     this.clear();

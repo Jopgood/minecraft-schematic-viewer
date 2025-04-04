@@ -1,0 +1,41 @@
+# Node.js dependencies
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary upload directory
+uploads/
+
+# Generated schematic data
+public/schematics/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Build files
+dist/
+build/
+.cache/
+
+# Minecraft textures (for copyright reasons)
+# Keep the directories but ignore the actual texture files
+public/textures/blocks/*.png
+public/textures/blocks/*.jpg
+public/textures/atlas.png
+
+# Keep these files even if patterns above would ignore them
+!public/textures/blocks/.gitkeep
